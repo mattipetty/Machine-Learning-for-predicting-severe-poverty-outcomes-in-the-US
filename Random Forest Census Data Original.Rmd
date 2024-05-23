@@ -1,0 +1,197 @@
+---
+title: "Random_Forest_Census_tract"
+author: "Mathew Attipetty"
+date: "2022-11-02"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+
+```{r knitr_init, echo=FALSE, cache=FALSE,include=FALSE}
+Sys.setenv(LANGUAGE = "en")
+library(knitr)
+library(tidyverse)
+library(caret)
+## Global options
+options(max.print="150") 
+opts_chunk$set(echo=TRUE,
+	             cache=TRUE,
+               prompt=FALSE,
+               tidy=TRUE,
+               comment=NA,
+               message=FALSE,
+               warning=FALSE)
+opts_knit$set(width=120)
+```
+
+```{r}
+library(haven)
+Census_pov <- read_dta("factorseverepoverty with bestsubset.dta")
+str(Census_pov)
+Census_pov$genderindex <- Census_pov$genderindex*10000
+Census_pov$citizenshiprate <- Census_pov$citizenshiprate*100
+Census_pov$employrate <- Census_pov$employrate*100
+
+Census_pov
+Census_pov$severepoverty = as.factor(Census_pov$severepoverty)
+Census_pov <- rename(Census_pov, "MedianIncome" = income1)
+Census_pov <- rename(Census_pov, "LaborForcePart" = professional1)
+Census_pov <- na.omit(Census_pov)
+
+
+set.seed(53706)
+trainIndex <- createDataPartition(Census_pov$severepoverty, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+
+train <- Census_pov[ trainIndex,]
+test <- Census_pov[-trainIndex,]
+
+```
+
+
+
+```{r}
+library(randomForest)
+library(ranger)
+# Train a Random Forest
+
+census_model <- randomForest(formula = severepoverty ~ ., 
+                            data = train)
+                #by default, replace = TRUE
+                #            mtry = max(floor(ncol(x)/3), 1)
+                #            sampsize = if (replace) nrow(x) else ceiling(.632*nrow(x))
+                #            ntree = 500
+                #            nodesize = 1
+                #            norm.votes = TRUE
+# http://rasbt.github.io/mlxtend/user_guide/evaluate/bootstrap_point632_score/
+          
+# Print the model output                             
+print(census_model)
+```
+
+```{r}
+# Grab OOB error matrix & take a look
+err <- census_model$err.rate
+head(err)
+
+# Look at final OOB error rate (last row in err matrix)
+oob_err <- err[nrow(err), "OOB"]
+print(oob_err)
+
+# Plot the model
+plot(census_model)
+
+# Add a legend since it doesn't have one by default
+legend(x = "right", 
+       legend = colnames(err),
+       fill = 1:ncol(err))
+```
+
+
+```{r}
+# Generate predicted classes using the model object
+test$pred <- predict(object = census_model,  # model object 
+                            newdata = test,  # test dataset
+                            type = "class")         # return classification labels
+                            
+# Calculate the confusion matrix for the test set
+cm <- confusionMatrix(data = test$pred,          # predicted classes
+                      reference = test$severepoverty
+                      )  # actual classes
+print(cm)
+
+# Compare test set accuracy to OOB accuracy
+paste0("Test Accuracy: ", cm$overall[1])
+paste0("OOB Accuracy: ", 1 - oob_err)
+```
+
+
+```{r}
+#?ranger
+
+
+# From previous step
+tuneGrid <- expand.grid(
+  .mtry = c(12:20),
+  .splitrule = "gini",
+  .min.node.size = c(1:4)
+)
+
+# Fit random forest: model
+rf_model <- train(
+  severepoverty ~ . ,
+  tuneLength = 1,
+  data = train, 
+  method = "ranger",
+  metric="Kappa",
+  tuneGrid = tuneGrid,
+  trControl = trainControl(
+    method = "cv", 
+    number = 5,
+    classProbs=TRUE,
+    verboseIter = FALSE,
+  )
+)
+
+# Print model to console
+rf_model
+plot(rf_model)
+rf_model$bestTune
+```
+
+
+```{r}
+digit_model <- randomForest(formula = severepoverty ~ . ,
+                            mtry = rf_model$bestTune$mtry,
+                            nodesize = rf_model$bestTune$min.node.size,
+                            data = train)
+
+# Generate predicted classes using the model object
+test$pred <- predict(object = census_model,
+                     newdata = test,  
+                     type = "class")         # return classification labels
+                            
+# Calculate accuracy for the test set
+confusionMatrix(test$severepoverty, test$pred)
+```
+```{r}
+library(tidyverse)
+library(caret)
+library(randomForest)
+
+
+rf_model$finalModel
+rf_model$bestTune
+predictions <- digit_model %>% predict(test)
+head(predictions)
+RMSE(predictions, test$poverty)
+
+
+
+
+```
+
+```{r}
+#Conditional=True, adjusts for correlations between predictors.
+poverty <- varImp(census_model, conditional=TRUE)
+#Gathering rownames in 'var'  and converting it to the factor
+#to provide 'fill' parameter for the bar chart. 
+poverty <- poverty %>% tibble::rownames_to_column("var") 
+poverty$var<- poverty$var %>% as.factor()
+#Plotting the bar and polar charts for comparing variables
+i_bar <- ggplot(data = poverty) + 
+  geom_bar(
+    stat = "identity",#it leaves the data without count and bin
+    mapping = aes(x = var, y=Overall, fill = var), 
+    show.legend = FALSE,
+    width = 1
+  ) + 
+  labs(x = NULL, y = NULL)
+i_bar + coord_polar() + theme_minimal()
+i_bar + coord_flip() + theme_minimal()
+```
+
+
+

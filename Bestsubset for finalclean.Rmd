@@ -1,0 +1,135 @@
+---
+title: "Random Forest Census tract"
+author: "Mathew Attipetty"
+date: "2022-11-02"
+output: html_document
+---
+
+
+```{r knitr_init, echo=FALSE, cache=FALSE,include=FALSE}
+Sys.setenv(LANGUAGE = "en")
+library(knitr)
+library(tidyverse)
+library(caret)
+## Global options
+options(max.print="150") 
+opts_chunk$set(echo=TRUE,
+	             cache=TRUE,
+               prompt=FALSE,
+               tidy=TRUE,
+               comment=NA,
+               message=FALSE,
+               warning=FALSE)
+opts_knit$set(width=120)
+```
+
+```{r}
+library(haven)
+Census_pov <- read_dta("finalclean.dta")
+str(Census_pov)
+
+
+Census_pov <- na.omit(Census_pov)
+
+
+set.seed(53706)
+trainIndex <- createDataPartition(Census_pov$poverty, p = .8, 
+                                  list = FALSE, 
+                                  times = 1)
+
+train <- Census_pov[ trainIndex,]
+test <- Census_pov[-trainIndex,]
+
+```
+
+
+```{r}
+library(leaps)
+regfit.fwd=regsubsets(poverty~.,train,nvmax = 256,method="forward") # default nvmax = 256 # RSS
+reg.summary <- summary(regfit.fwd)
+```
+
+```{r}
+reg.summary$rsq # R square
+par(mfrow=c(2,2))
+plot(reg.summary$rss,xlab="Number of Variables",ylab="RSS",type="l") # residual sum of square
+plot(reg.summary$adjr2,xlab="Number of Variables",ylab="Adjusted RSq",type="l") # adjusted R square, adjust for the number of predictors
+which.max(reg.summary$adjr2)
+a <- which.max(reg.summary$adjr2)
+points(a,reg.summary$adjr2[a], col="red",cex=2,pch=20) # cex--relative size, default = 1
+plot(reg.summary$cp,xlab="Number of Variables",ylab="Cp",type='l') # 'l' type tells R to connect the point with the line.
+which.min(reg.summary$cp)
+b <- which.min(reg.summary$cp)
+points(b,reg.summary$cp[b],col="red",cex=2,pch=20)
+which.min(reg.summary$bic)
+c <- which.min(reg.summary$bic)
+plot(reg.summary$bic,xlab="Number of Variables",ylab="BIC",type='l')
+points(c,reg.summary$bic[c],col="red",cex=2,pch=20)
+
+bestset_fwd <- c(a,b,c)
+```
+```{r}
+bestset_fwd
+```
+
+```{r}
+form <- {}
+coefi <- {}
+
+for (i in bestset_fwd) {
+  coefi <- coef(regfit.fwd,i)
+  form[i] <- "poverty ~"
+  
+  for (j in 1:i) {
+    form[i] <- paste(form[i],names(coefi[j+1]))
+    if (j < i){
+      form[i] <- paste(form[i],'+')
+    }
+  }
+}
+
+```
+
+
+```{r}
+library(caret)
+model <- list()
+
+# Fit lm model using 10 x 5-fold CV: model
+for (i in bestset_fwd) {
+  model[[i]] <- train(
+    formula(form[i]), 
+    train,
+    method = "lm",
+    trControl = trainControl(
+      method = "repeatedcv", 
+      number = 10,  
+      repeats = 5, 
+      verboseIter = FALSE
+    )
+  )
+}
+
+# Print model to console
+
+cv_rmse <- {}
+
+for (i in bestset_fwd) {
+  print(model[[i]]$results$RMSE)
+  cv_rmse[i] <- model[[i]]$results$RMSE
+}
+
+(n <- which.min(cv_rmse))
+form[which.min(cv_rmse)]
+```
+```{r}
+final_model <- lm(formula(form[n]),train)
+```
+
+
+```{r}
+test$pred <- predict(final_model,test)
+sqrt(mean((test$pred - test$poverty)^2))
+```
+
+

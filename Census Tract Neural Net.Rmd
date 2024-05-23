@@ -1,0 +1,72 @@
+---
+title: "Nerual Network for poverty rate census tract"
+author: "Mathew Attipetty"
+date: "2022-10-26"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+Sys.setenv(LANGUAGE = "en")
+rm(list = ls())
+library(knitr)
+library(tidyverse)
+## Global options
+options(max.print="150") 
+opts_chunk$set(echo=TRUE,
+	             cache=TRUE,
+               prompt=FALSE,
+               tidy=TRUE,
+               comment=NA,
+               message=FALSE,
+               warning=FALSE)
+opts_knit$set(width=120)
+```
+
+## Clean up 
+```{r}
+keras::install_keras()
+library(reticulate)
+library(keras)
+library(tidyverse)
+library(caret)
+```
+
+```{r}
+library(haven)
+Census_pov <- read_dta("censustract-cleaned.dta")
+
+
+
+Census_pov <- na.omit(Census_pov) # delete NA obs
+Census_pov
+
+Census_pov <- subset(Census_pov, select = -c(v1, censustract, state, county))
+
+Census_pov
+set.seed(53705)
+trainIndex <- createDataPartition(Census_pov$poverty, p = .75, 
+                                  list = FALSE, 
+                                  times = 1)
+
+Census_pov_train <- Census_pov[ trainIndex,]
+Census_pov_test <- Census_pov[-trainIndex,]
+```
+
+```{r}
+keras::install_keras()
+y_train <- to_categorical(Census_pov$poverty, 2, dtype = "int")
+y_test <- to_categorical(Census_pov$poverty, 2, dtype = "int")
+```
+
+#Defining the model 
+```{r}
+model <- keras_model_sequential() 
+model %>% 
+  layer_dense(units = 8, activation = 'relu', input_shape = c(12)) %>% 
+  layer_dense(units = 5, activation = 'relu') %>% 
+  layer_dense(units = 2, activation = 'softmax')
+
+summary(model)
+```
+
